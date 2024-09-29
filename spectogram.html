@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="Homepage for the max1220 JavaScript Audio Modem Library">
+	<meta name="author" content="max1220">
+	<title>Spectrum viewer</title>
+	<style>
+		body, html {
+			padding: 0 0;
+			margin: 0 0;
+			font-family: sans-serif;
+			background-color: #000;
+			color: #fff;
+		}
+		#spectrum_canvas {
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			width: 100%;
+			height: 100%;
+		}
+		#frequency_overlay {
+			position: absolute;
+			top: 0;
+			right: 0;
+			z-index: 1;
+			background-color: rgba(255,255,255,0.2);
+			padding: 2px;
+		}
+		#frequency_low_text {
+			text-align: end;
+		}
+		#frequency_low_text, #frequency_high_text {
+			display: inline-block;
+			width: 200px;
+		}
+	</style>
+</head>
+<body>
+	<div>
+		<h1>Click anywhere to start.</h1>
+	</div>
+	<div id="frequency_overlay">
+		Frequency: <span id="frequency_low_text"></span> → <span id="frequency_high_text"></span>
+	</div>
+	<canvas id="spectrum_canvas" height="400" onclick="spectrum_canvas_click(event)"></canvas>
+
+	<script>
+		let canvas_ctx = spectrum_canvas.getContext("2d")
+		let cy = 0
+		let url_params = location.search.slice(1).split("&").map(kv => kv.split("=").map(e => decodeURIComponent(e)))
+		let url_params_obj = {}
+		url_params.forEach(kv => url_params_obj[kv[0]] = kv[1])
+
+		// get search string parameters
+		let fft_size = url_params_obj.fft_size ? parseInt(url_params_obj.fft_size) : 2048
+		let smoothing = url_params_obj.smoothing ? parseFloat(url_params_obj.smoothing) : 0.8
+		let update_rate = url_params_obj.update_rate ? parseInt(url_params_obj.update_rate) : undefined
+		let threshold = url_params_obj.threshold ? parseFloat(url_params_obj.threshold) : undefined
+		let duration = url_params_obj.duration ? parseInt(url_params_obj.duration) : 400
+
+		let started = false
+		let audio_ctx = undefined
+		let analyser_node = undefined
+		let fft_bins = undefined
+		let media_stream = undefined
+		let source_node = undefined
+
+		// show the clicked frequency when 
+		function spectrum_canvas_click(ev) {
+			if (!started) {
+				started = true
+				return start_stream()
+			}
+			let rect = spectrum_canvas.getBoundingClientRect()
+			let x = ev.clientX - rect.left
+			let y = ev.clientY - rect.top
+			let bin_size = audio_ctx.sampleRate / fft_size
+			let freq = x*bin_size
+			frequency_low_text.innerText = freq + "hz"
+			frequency_high_text.innerText = (freq+bin_size) + "hz"
+		}
+
+		// update the 
+		function update_canvas() {
+			analyser_node.getByteFrequencyData(fft_bins)
+			if (spectrum_canvas.width !== fft_bins.length) { spectrum_canvas.width = fft_bins.length; }
+			let ny = (cy+1) % spectrum_canvas.height
+			// draw next line to show current position
+			canvas_ctx.beginPath()
+			canvas_ctx.moveTo(0, ny)
+			canvas_ctx.strokeStyle = "rgba(0,255,0,1)"
+			canvas_ctx.lineTo(spectrum_canvas.width, ny)
+			canvas_ctx.stroke()
+			// create image data from fft bins
+			let image_data = new ImageData(fft_bins.length, 1)
+			for (let i=0; i<fft_bins.length; i++) {
+				if (threshold) {
+					image_data.data[i*4] = fft_bins[i] > threshold ? 255 : 0
+					image_data.data[i*4+1] = fft_bins[i] > threshold ? 255 : 0
+					image_data.data[i*4+2] = fft_bins[i] > threshold ? 255 : 0
+					image_data.data[i*4+3] = 255
+				} else {
+					image_data.data[i*4] = fft_bins[i]
+					image_data.data[i*4+1] = fft_bins[i]
+					image_data.data[i*4+2] = fft_bins[i]
+					image_data.data[i*4+3] = 255
+				}
+			}
+			// put image data on canvas and update cy
+			canvas_ctx.putImageData(image_data, 0, cy)
+			cy = ny
+		}
+
+		// request audio input from user and start the waterfall
+		async function start_stream() {
+			// set the height width to the duration
+			spectrum_canvas.height = duration
+			// get the audio stream from the users microphone
+			media_stream = await navigator.mediaDevices.getUserMedia({audio: true})
+			// create an audio graph from the media_stream, and stream to an analyser node
+			audio_ctx = new AudioContext()
+			source_node = audio_ctx.createMediaStreamSource(media_stream)
+			analyser_node = audio_ctx.createAnalyser()
+			analyser_node.smoothingTimeConstant = smoothing
+			analyser_node.fftSize = fft_size
+			fft_bins = new Uint8Array(analyser_node.frequencyBinCount)
+			source_node.connect(analyser_node)
+			// watch the FFT data
+			if (update_rate) {
+				setInterval(update_canvas, update_rate)
+			} else {
+				let render = () => { update_canvas(); requestAnimationFrame(render) }
+				requestAnimationFrame(render)
+			}
+		}
+	</script>
+</body>
+</html>

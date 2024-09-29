@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="Homepage for the max1220 JavaScript Audio Modem Library">
+	<meta name="author" content="max1220">
+	<title>JavaScript Audio Modem - Homepage</title>
+	<style>
+		:root {
+			--fg-color: #222;
+			--fg2-color: #444;
+			--bg-color: #fff;
+		}
+		body, html {
+			padding: 0 0;
+			margin: 0 0;
+			background-color: var(--bg-color);
+			color: var(--fg-color);
+			font-family: sans-serif;
+			line-height: 1.75;
+		}
+		.content {
+			max-width: 800px;
+			margin: 0 auto;
+			padding: 2em;
+		}
+		h2, h3, h4, h5, h6 {
+			color: var(--fg2-color);
+		}
+		.center {
+			margin-left: auto;
+			margin-right: auto;
+			width: fit-content;
+		}
+		code {
+			border: 1px solid #888;
+			border-radius: 4px;
+			padding: 1px 4px;
+		}
+		.lead {
+			font-size: 125%;
+			font-weight: lighter;
+			margin-top: 30px;
+			margin-bottom: 30px;
+			width: fit-content;
+		}
+		a {
+			color: #66f;
+			text-decoration: underline;
+		}
+
+		.reception_box {
+			position: relative;
+			display: inline-block;
+			width: 200px;
+			height: 25px;
+			border: 1px solid #888;
+		}
+		.reception_indicator {
+			position: absolute;
+			top: 0;
+			left: 0;
+			bottom: 0;
+			width: 0;
+			background-color: rgba(0,255,0,0.5);
+		}
+		#clock_level_indicator {
+			height: 25px;
+			border: 1px solid #888;
+			display: inline-block;
+		}
+		#decoded_data_text {
+			border: 1px solid #888;
+			height: 200px;
+			overflow: auto;
+		}
+		#spectrum_canvas {
+			border: 1px solid #888;
+			width: 100%;
+		}
+
+		/* Make this page automatically switch to darkmode if preferred */
+		@media (prefers-color-scheme: dark) {
+			:root {
+				--fg-color: #fff;
+				--fg2-color: #bbb;
+				--bg-color: #111;
+			}
+		}
+	</style>
+</head>
+<body>
+	
+	<!-- Regular HTML content -->
+	<div class="content">
+		<h1>max1220 JavaScript Audio Modem Library</h1>
+		<div>
+			<div class="lead">
+				Homepage for the max1220 JavaScript Audio Modem Library.
+			</div>
+			<p>
+				This library implements a simple audio modem for the browser,
+				using the Media and Web audio APIs.
+				Specifically, it uses the <code>getUserMedia</code> functions to obtain the Microphone/sound input data,
+				and the <code>AudioContext</code> API to obtain FFT data and generate/play sounds.<br>
+			</p>
+			<p>
+				For debugging purposes a generic audio spectogram viewer is also included:<br>
+				<a href="spectogram.html" target="_blank">Audio Spectogram Viewer</a><br>
+				<small>(The decoding spectogram below is band-pass filtered)</small>
+			</p>
+		</div>
+		<div>
+			<h2>Modulation</h2>
+			<p>
+				This library uses a simple ASK modulation. To encode a single symbol of n bits,
+				n+2 frequencies are generated(clock signal, constant low signal, data bit signals).<br>
+				When decoding, the FFT frequency bin of the low frequency is subtracted from the clock frequency bin,
+				and if it is greater than a threshold, the clock is considered high.
+				A symbol starts on the rising edge of the clock, and stops on the falling edge.
+				While the clock is high, the data bit frequency amplitudes are averaged,
+				and on a falling edge of the clock the averages are used to decode the symbol data.<br>
+				This modulation scheme was chosen to be simple to understand and implement,
+				and allow the decoder to work using only the FFT data easily available by the Web Audio APIs,
+				and to be somewhat resistant to general broad-spectrum ambient noise
+				(signals can be averaged over a longer symbol duration to reject more noise if needed).<br>
+			</p>
+		</div>
+
+		<div>
+			<h2>Encode</h2>
+			<div>
+				<label>
+					<span>Data:</span>
+					<input type="text" id="encode_data_input">
+				</label>
+				<button onclick="encode_data()">Encode</button>
+			</div>
+			<div>
+				<label>
+					<span>Volume:</span>
+					<input id="volume_value" type="range" min="0" max="1" value="0.5" step="0.005">
+				</label>
+			</div>
+		</div>
+		
+		<div>
+			<h2>Decode</h2>
+			<div>
+				<label>
+					Enable threshold:
+					<input id="threshold_ena" type="checkbox">
+				</label>
+			</div>
+			<div>
+				<label>
+					Threshold value:
+					<input id="threshold_value" type="range" min="-100" max="-30" value="-40">
+				</label>
+			</div>
+			<button class="btn" id="start_listening_btn" onclick="start_listening()">Start Listening</button>
+			<div>
+				<div class="reception_box">Clock<div id="clock_indicator" class="reception_indicator"></div></div>
+				<div class="reception_box">Silence<div id="zero_indicator" class="reception_indicator"></div></div>
+				<div class="reception_box">Signal<div id="signal_indicator" class="reception_indicator"></div></div>
+				<div class="clock" id="clock_level_indicator">Clock</div>
+			</div>
+			<canvas id="spectrum_canvas" width="1024" height="800"></canvas>
+			
+			<h4>Decoded data:</h4>
+			<div>
+				<button onclick="decoded_data_text.innerText=''">Clear</button>
+			</div>
+			<pre id="decoded_data_text"></pre>
+		</div>
+	</div>
+
+	<!-- The example JavaScript code -->
+	<script src="AudioModem.js"></script>
+	<script>
+		// configuration for the modem(encoder/decoder)
+		let modem_config = {
+			// size of FFT
+			fft_size: 2048,
+			// smoothing time constant
+			fft_smoothing: 0.0,
+			// check FFT every n ms
+			fft_rate: 5,
+			// duration of a symbol in ms
+			symbol_duration: 25,
+			// pause between symbols in ms
+			symbol_pause: 25,
+			// symbol count
+			symbol_data_bits: 16,
+			// Q value for the decoding bandpass filter
+			decode_bandpass_q: 1,
+			// decoder signal threshold
+			decode_threshold: 25,
+			// Q value for the encoding bandpass filter
+			encode_bandpass_q: 1,
+			// gain value of a low bit(0)
+			encode_gain_low: 0,
+			// gain value of a high bit(1)
+			encode_gain_high: 0.1,
+		}
+		
+		// generate the list of frequencies used in the config from a starting frequency and a channel spacing
+		modem_config.bit_freqs = generate_bit_freqs(modem_config.symbol_data_bits+2, 3000, 133)
+		console.log("Modem configuration:",modem_config)
+
+		// create an audio context
+		let audio_ctx = new AudioContext()
+
+		// reference to the modem decoder object
+		let modem_decoder
+		let modem_encoder
+		
+		// clamp a decibel value from the FFT to a useful range(remove infinities)
+		let clamp_db = (db) => Math.min(-30, Math.max(-100, db))
+
+		// normalize a decibel value from the FFT
+		let norm_db = (db) => (clamp_db(db)+100)/70
+
+		// handle FFT data(draw FFT to current line in the spectrum canvas)
+		let cy = 0
+		let canvas_ctx = spectrum_canvas.getContext("2d")
+		function render_fft_data(fft_bins) {
+			if (!modem_decoder.source_node) { return; }
+
+			// update the indicators
+			let clk_bin = fft_bins[modem_decoder.get_bin_for_freq(modem_config.bit_freqs[0].center)]
+			let low_bin = fft_bins[modem_decoder.get_bin_for_freq(modem_config.bit_freqs[1].center)]
+			let delta = clk_bin - low_bin
+			clock_indicator.style.width = (norm_db(clk_bin)*100) + "%"
+			zero_indicator.style.width = (norm_db(low_bin)*100) + "%"
+			signal_indicator.style.width = (delta) + "%"
+			clock_level_indicator.style.backgroundColor = modem_decoder.state.clock_level ? "#fff" : ""
+
+			// make sure the FFT data fits the canvas neatly
+			if (spectrum_canvas.width !== fft_bins.length) { spectrum_canvas.width = fft_bins.length; }
+			
+			// draw next horizontal line to show current position
+			let ny = (cy+1) % spectrum_canvas.height
+			canvas_ctx.beginPath()
+			canvas_ctx.moveTo(0, ny)
+			canvas_ctx.strokeStyle = "rgba(0,255,0,1)"
+			canvas_ctx.lineTo(spectrum_canvas.width, ny)
+			canvas_ctx.stroke()
+
+			// draw vertical lines for each configured bit_freq
+			modem_config.bit_freqs.forEach((bit_freq) => {
+				canvas_ctx.beginPath()
+				let bin_i = modem_decoder.get_bin_for_freq(bit_freq.center)
+				canvas_ctx.moveTo(bin_i, ny)
+				canvas_ctx.strokeStyle = "rgba(0,0,255,1)"
+				canvas_ctx.lineTo(bin_i, spectrum_canvas.height)
+				canvas_ctx.stroke()
+			})
+			
+			let image_data = new ImageData(fft_bins.length, 1)
+
+			for (let i=0; i<fft_bins.length; i++) {
+				let n = Math.floor(norm_db(fft_bins[i])*255)
+				if (threshold_ena.checked) {
+					let th = parseInt(threshold_value.value)
+					image_data.data[i*4] = fft_bins[i] > th ? 255 : n
+					image_data.data[i*4+1] = fft_bins[i] > th ? 0 : n
+					image_data.data[i*4+2] = fft_bins[i] > th ? 0 : n
+				} else {
+					image_data.data[i*4] = n
+					image_data.data[i*4+1] = n
+					image_data.data[i*4+2] = n
+				}
+				image_data.data[i*4+3] = 255
+			}
+			canvas_ctx.putImageData(image_data, 0, cy)
+			cy = ny
+		}
+		
+		// handle a decoded symbol from the modem
+		function handle_symbol(symbol) {
+			let bits_str = symbol.map(e => e ? "1" : "0").join("")
+			let a = bits_str.slice(0, 8)
+			let b = bits_str.slice(8)
+			//let code = parseInt(bits_str, 2)
+			let code = parseInt(a, 2)
+			console.log("Got symbol:", symbol, a, b, code)
+			decoded_data_text.innerText += bits_str + ",  Int=" + code + ",  Char=" + String.fromCodePoint(code) + "\n"
+			decoded_data_text.scrollTop = decoded_data_text.scrollHeight
+		}
+
+		// start listening for symbol from the microphone
+		function start_listening() {
+			navigator.mediaDevices.getUserMedia({audio: true}).then((stream) => {
+				let source_node = audio_ctx.createMediaStreamSource(stream)
+				modem_decoder.connect_source(source_node)
+				start_listening_btn.disabled = true
+				start_listening_btn.innerText = "Listening..."
+			})
+		}
+
+		// convert text to array of bits
+		function text_to_bits(text) {
+			let chars = [] // each is turned into an array of bits
+			new TextEncoder().encode(text).map((byte_val) => {
+				let bits = byte_val.toString(2).padStart(8, "0").slice(0, 8).split("").map(e => parseInt(e))
+				for (let i=0; i<8; i++) { bits.push(bits[i]); }
+				chars.push(bits)
+				return bits
+			})
+			return chars
+		}
+
+		// encode the data
+		function encode_data() {
+			modem_encoder.gain_node.gain.value = volume_value.value
+			let bits = text_to_bits(encode_data_input.value)
+			console.log("encode", bits, audio_ctx.currentTime)
+			modem_encoder.encode(bits, audio_ctx.currentTime)
+		}
+
+		// create new modem objects
+		modem_decoder = new AudioModemDecoder(modem_config, audio_ctx, render_fft_data, handle_symbol)
+		modem_encoder = new AudioModemEncoder(modem_config, audio_ctx)
+		start_listening()
+	</script>
+</body>
+</html>
